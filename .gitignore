@@ -3,3 +3,4 @@ init.gdb
 *.ch8
 *.py
 script*
+*/build/*

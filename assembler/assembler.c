@@ -3,30 +3,10 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include "instructions.h"
+
 #define EXTENSION ".ch8"
 
-int assemble(FILE* in, FILE* out) {
-    char* lineptr;
-    size_t len = 0;
-    ssize_t nread;
-    char* word;
-    char* word2;
-    while ((nread = getline(&lineptr, &len, in)) != -1) {
-        if (lineptr[0] == ';') continue;
-        word = strtok(lineptr, " ;\n");
-        // 1 symbol instructions
-        if (strcmp(word, "clear") == 0) {
-            fwrite("\x00\xE0", 1, 2, out);
-            continue;
-        } else if (strcmp(word, "ret") == 0) {
-            fwrite("\x00\xEE", 1, 2, out);
-            continue;
-        }
-        word2 = strtok(NULL, " ;\n");
-    }
-    free(lineptr);
-    return 0;
-}
 
 int main(int argc, char** argv) {
     if (argc < 2) {
@@ -62,7 +42,6 @@ int main(int argc, char** argv) {
     }
 
     int status = assemble(input, output);
-
 
     fclose(input);
     fclose(output);
