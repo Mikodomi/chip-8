@@ -37,7 +37,14 @@
 | `FX33` | `bcd vX` |
 | `FX55` | `movout vX` |
 | `FX65` | `movin vX` | 
+### Note
+- `nnn` - memory address
+- `nn, n` - constant numeric value
+- `vX` - the Xth register (X must be hexadecimal)
+- `dtm, stm` - Delay timer, Sound timer
+- `I` - the special address register
 
+Memory addresses and numeric values can be written in binary (`nnnB`), octal (`nnnO`), decimal (no suffix) or hexadecimal (`nnnH`) format.
 
 
 
