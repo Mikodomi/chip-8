@@ -42,8 +42,11 @@ int main(int argc, char** argv) {
     }
 
     int status = assemble(input, output);
+    if (status < 0) {
+        fprintf(stderr, "unrecognized symbol");
+    }
 
     fclose(input);
     fclose(output);
-    return 0;
+    return status;
 }

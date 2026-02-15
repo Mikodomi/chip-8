@@ -20,13 +20,21 @@ enum instr_flags_enum {
 
 typedef enum instr_flags_enum instr_flags;
 
+
+enum error_t_enum {
+    INVALID_OPERAND,
+    REGEX_ERROR,
+};
+
+typedef enum error_t_enum error_t;
+
 int assemble(FILE* in, FILE* out);
 
 int parse_number(char* word);
 
-int reg_reg_instr(FILE* out, char* op1, char* op2, instr_flags flag);
-int mem_instr(FILE* out, char* line, instr_flags instr);
+error_t reg_reg_instr(FILE* out, char* op1, char* op2, instr_flags flag);
+error_t mem_instr(FILE* out, char* line, instr_flags instr);
 
-int mov(FILE* out, char* op1, char* op2);
+error_t mov(FILE* out, char* op1, char* op2);
 
 #endif
