@@ -6,6 +6,12 @@
 #include <inttypes.h>
 #include <regex.h>
 
+size_t write_BE(FILE* out, uint16_t in) {
+    char temp[2];
+    temp[0] = (in & 0xFF00) >> 8;
+    temp[1] = (in & 0x00FF);
+    return fwrite(temp, 1, 2, out);
+}
 
 int assemble(FILE* in, FILE* out) {
     size_t len = 0;
@@ -14,106 +20,98 @@ int assemble(FILE* in, FILE* out) {
     int amount;
     while ((nread = getline(&lineptr, &len, in)) != -1) {
         if (lineptr[0] == ';' || lineptr[0] == '\n') continue;
-        token line_toks[MAX_TOKENS];
-        amount = tokenize_line(lineptr, line_toks);  
-        for (int i = 0; i<amount; i++) {
-            printf("%d %d, ", line_toks[i].type, line_toks[i].value);
+        token token_arr[MAX_TOKENS];
+        amount = tokenize_line(lineptr, token_arr);  
+        switch(token_arr[0].type) {
+                case TOKEN_CLEAR:
+                    write_BE(out, INSTR_FLAG_CLEAR);
+                    break;
+                case TOKEN_RET:
+                    write_BE(out, INSTR_FLAG_RET);
+                    break;
+                case TOKEN_JMP:
+                case TOKEN_CALL:
+                case TOKEN_JV0:
+                    mem_instr(out, token_arr);
+                    break;
+                case TOKEN_MOV:
+                    mov(out, token_arr);
+                    break;
+                default: return -1;
         }
-        printf("\n");
     }
     return 0;
 }
 
-//int assemble(FILE* in, FILE* out) {
-//    int status = 0;
-//    int linenum = 0;
-//    char* lineptr;
-//    size_t len = 0;
-//    ssize_t nread;
-//    char* instr;
-//    char *op1, *op2, *op3;
-//    while ((nread = getline(&lineptr, &len, in)) != -1) {
-//        linenum++;
-//        if (lineptr[0] == ';' || lineptr[0] == '\n') continue;
-//        instr = strtok(lineptr, SPECIAL_CHARS);
-//        if (!instr) break;
-//        // instructions with no operand
-//        if (strcmp(instr, "clear") == 0) {
-//            fwrite("\x00\xE0", 1, 2, out);
-//            continue;
-//        } else if (strcmp(instr, "ret") == 0) {
-//            fwrite("\x00\xEE", 1, 2, out);
-//            continue;
-//        }
-//        // 1 operand instructions
-//        op1 = strtok(NULL, SPECIAL_CHARS);
-//        if (strcmp(instr, "jmp") == 0 ) {
-//            status = mem_instr(out, op1, INSTR_FLAG_JMP);
-//            continue;
-//        } else if (strcmp(instr, "call") == 0) {
-//            status = mem_instr(out, op1, INSTR_FLAG_CALL);
-//            continue;
-//        } else if (strcmp(instr, "jv0") == 0) {
-//            status = mem_instr(out, op1, INSTR_FLAG_JV0);
-//            continue;
-//        }
-//        // 2 operand instructions
-//        op2 = strtok(NULL, SPECIAL_CHARS);
-//        // there has to be a better way to do this
-//        if (strcmp(instr, "mov") == 0) {
-//            mov(out, op1, op2);
-//            continue;
-//        } else if (strcmp(instr, "or") == 0) {
-//            reg_reg_instr(out, op1, op2, INSTR_FLAG_REG_REG_OR);
-//            continue;
-//        } else if (strcmp(instr, "and") == 0) {
-//            reg_reg_instr(out, op1, op2, INSTR_FLAG_REG_REG_AND);
-//            continue;
-//        } else if (strcmp(instr, "xor") == 0) {
-//            reg_reg_instr(out, op1, op2, INSTR_FLAG_REG_REG_XOR);
-//            continue;
-//        } else if (strcmp(instr, "add") == 0) {
-//            reg_reg_instr(out, op1, op2, INSTR_FLAG_REG_REG_ADD);
-//            continue;
-//        } else if (strcmp(instr, "sub") == 0) {
-//            reg_reg_instr(out, op1, op2, INSTR_FLAG_REG_REG_SUB);
-//            continue;
-//        } else if (strcmp(instr, "msr") == 0) {
-//            reg_reg_instr(out, op1, op2, INSTR_FLAG_REG_REG_MSR);
-//            continue;
-//        } else if (strcmp(instr, "subs") == 0) {
-//            reg_reg_instr(out, op1, op2, INSTR_FLAG_REG_REG_SUBS);
-//            continue;
-//        } else if (strcmp(instr, "msl") == 0) {
-//            reg_reg_instr(out, op1, op2, INSTR_FLAG_REG_REG_MSL);
-//            continue;
-//        }
-//        status = -1;
-//        break;
-//    }
-//    free(lineptr);
-//    return status;
+error_t mem_instr(FILE* out, const token* token_arr) {
+    if (token_arr[1].type != TOKEN_CONST) return INVALID_OPERANDS;
+    if (token_arr[1].value >= 0x1000) return INVALID_OPERAND_SIZE;
+    uint16_t flag;
+    switch (token_arr[0].type) {
+        case TOKEN_JMP: flag = INSTR_FLAG_JMP; break;
+        case TOKEN_CALL: flag = INSTR_FLAG_CALL; break;
+        case TOKEN_JV0: flag = INSTR_FLAG_JV0; break;
+        default: return INVALID_OPERANDS;
+    }
+    uint16_t opcode = token_arr[1].value;
+    opcode |= INSTR_FLAG_JMP;
+    return write_BE(out, opcode) == 2;
+}
+
+error_t mov(FILE* out, const token* token_arr) {
+    uint16_t opcode;
+    switch (token_arr[1].type) {
+        case TOKEN_I:
+            if (token_arr[2].type != TOKEN_CONST) return INVALID_OPERANDS;
+            if (token_arr[2].value >= 0x1000) return INVALID_OPERAND_SIZE;
+            opcode = token_arr[2].value;
+            opcode |= INSTR_FLAG_MOV_I_NNN;
+            break;
+        case TOKEN_REG:
+            opcode = (token_arr[1].value) << 8;
+            switch(token_arr[2].type) {
+                case TOKEN_REG:
+                    opcode |= ((token_arr[2].value) << 4);
+                    opcode |= INSTR_FLAG_MOV_VX_VY;
+                    break;
+                case TOKEN_CONST:
+                    if (token_arr[2].value >= 0x100) return INVALID_OPERAND_SIZE;
+                    opcode |= INSTR_FLAG_MOV_VX_NN;
+                    opcode |= (token_arr[2].value); 
+                    break;
+                case TOKEN_DTM:
+                    opcode |= INSTR_FLAG_MOV_VX_DTM;
+                    break;
+                default: return INVALID_OPERANDS;
+            }
+            break;
+        case TOKEN_DTM:
+            if (token_arr[2].type != TOKEN_REG) return INVALID_OPERANDS;
+            opcode = (token_arr[2].value) << 8;
+            opcode |= INSTR_FLAG_MOV_DTM_VX;
+            break;
+        case TOKEN_STM:
+            if (token_arr[2].type != TOKEN_REG) return INVALID_OPERANDS;
+            opcode = (token_arr[2].value) << 8;
+            opcode |= INSTR_FLAG_MOV_STM_VX;
+            break;
+        default:
+            return INVALID_OPERANDS;
+    } 
+    return write_BE(out, opcode) == 2;
+}
+
+//error_t mem_instr(FILE* out, char* address, instr_flags flag) {
+//    assert(flag == INSTR_FLAG_JMP || 
+//            flag == INSTR_FLAG_CALL ||
+//            flag == INSTR_FLAG_JV0 ||
+//            flag == INSTR_FLAG_MOV_I);
+//    int number = parse_number(address);
+//    if (number >= 0x1000 || number < 0) return -1;
+//    number |= flag;
+//    if (write_BE(out, number) != 2) return -1;
+//    return 0;
 //}
-
-
-size_t write_BE(FILE* out, uint16_t in) {
-    char temp[2];
-    temp[0] = (in & 0xFF00) >> 8;
-    temp[1] = (in & 0x00FF);
-    return fwrite(temp, 1, 2, out);
-}
-
-error_t mem_instr(FILE* out, char* address, instr_flags flag) {
-    assert(flag == INSTR_FLAG_JMP || 
-            flag == INSTR_FLAG_CALL ||
-            flag == INSTR_FLAG_JV0 ||
-            flag == INSTR_FLAG_MOV_I);
-    int number = parse_number(address);
-    if (number >= 0x1000 || number < 0) return -1;
-    number |= flag;
-    if (write_BE(out, number) != 2) return -1;
-    return 0;
-}
 
 error_t reg_reg_instr(FILE* out, char* op1, char* op2, instr_flags flag) {
     // checking if operands are valid registers
@@ -133,15 +131,4 @@ error_t reg_reg_instr(FILE* out, char* op1, char* op2, instr_flags flag) {
     reg1 = ((reg1 << 8) | (reg2 << 4) | flag);
     if (write_BE(out, reg1) != 2) return -1;
     return 0;
-}
-
-error_t mov(FILE* out, char* op1, char* op2) {
-    if (!op1) return -1;
-    if (op1[0] == 'I') {
-        return mem_instr(out, op1, INSTR_FLAG_MOV_I);
-    }
-    if (op1[0] == 'v' && op2[0] == 'v') {
-        return reg_reg_instr(out, op1, op2, INSTR_FLAG_REG_REG_MOV); 
-    }
-    return -1; // 'mov dtm, ...' etc. unimplemented for now
 }

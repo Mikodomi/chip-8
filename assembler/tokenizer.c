@@ -144,10 +144,10 @@ int tokenize_line(char* src, token* dest) {
         } else if ((value = parse_number(curr)) > 0){
             dest[tokamount].type = TOKEN_CONST;
             dest[tokamount].value = value;
-            break;
         } else {
             dest[tokamount].type = TOKEN_INVALID;
             tokamount--;
+            break;
         }
     } 
     return ++tokamount;
