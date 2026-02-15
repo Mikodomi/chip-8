@@ -4,3 +4,4 @@ init.gdb
 *.py
 script*
 */build/*
+assembler/checklist.md

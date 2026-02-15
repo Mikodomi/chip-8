@@ -37,6 +37,30 @@ int assemble(FILE* in, FILE* out) {
                 case TOKEN_MOV:
                     mov(out, token_arr);
                     break;
+                case TOKEN_OR:
+                case TOKEN_AND:
+                case TOKEN_XOR:
+                case TOKEN_SUB:
+                case TOKEN_SUBS:
+                case TOKEN_MSR:
+                case TOKEN_MSL:
+                    reg_reg_instr(out, token_arr);
+                    break;
+                case TOKEN_SKPE:
+                    skpe(out, token_arr);
+                    break;
+                case TOKEN_SKPNE:
+                    skpne(out, token_arr);
+                    break;
+                case TOKEN_ADD:
+                    add(out, token_arr);
+                    break;
+                case TOKEN_RAND:
+                    rand_chip8(out, token_arr);
+                    break;
+                case TOKEN_DRAW:
+                    draw(out, token_arr);
+                    break;
                 default: return -1;
         }
     }
@@ -101,34 +125,121 @@ error_t mov(FILE* out, const token* token_arr) {
     return write_BE(out, opcode) == 2;
 }
 
-//error_t mem_instr(FILE* out, char* address, instr_flags flag) {
-//    assert(flag == INSTR_FLAG_JMP || 
-//            flag == INSTR_FLAG_CALL ||
-//            flag == INSTR_FLAG_JV0 ||
-//            flag == INSTR_FLAG_MOV_I);
-//    int number = parse_number(address);
-//    if (number >= 0x1000 || number < 0) return -1;
-//    number |= flag;
-//    if (write_BE(out, number) != 2) return -1;
-//    return 0;
-//}
+error_t reg_reg_instr(FILE* out, const token* token_arr) {
+    if (token_arr[1].type != TOKEN_REG || token_arr[2].type != TOKEN_REG) {
+        return INVALID_OPERANDS;
+    }
+    uint16_t opcode;
+    opcode = (token_arr[1].value << 8) | (token_arr[2].value << 4);
+    switch (token_arr[0].type) {
+        // mov implemented seperately
+        case TOKEN_OR: opcode |= INSTR_FLAG_OR; break;
+        case TOKEN_AND: opcode |= INSTR_FLAG_AND; break;
+        case TOKEN_XOR: opcode |= INSTR_FLAG_XOR; break;
+        // add implemented seperately
+        case TOKEN_SUB: opcode |= INSTR_FLAG_SUB; break;
+        case TOKEN_MSR: opcode |= INSTR_FLAG_MSR; break;
+        case TOKEN_SUBS: opcode |= INSTR_FLAG_SUBS; break;
+        case TOKEN_MSL: opcode |= INSTR_FLAG_MSL; break;
+        // skpe and skpne implemented seperately
+        default: return INVALID_OPERANDS;
+    }
+    return write_BE(out, opcode);
+}
 
-error_t reg_reg_instr(FILE* out, char* op1, char* op2, instr_flags flag) {
-    // checking if operands are valid registers
-    regex_t regex;
-    int status = regcomp(&regex, "^v([0-9]|[A-F])$", REG_EXTENDED);
-    if (status != 0) return -2;
-    status += regexec(&regex, op1, 0, NULL, 0);
-    status += regexec(&regex, op2, 0, NULL, 0);
-    regfree(&regex);
-    if (status != 0) return -1;
+error_t skpe(FILE* out, const token* token_arr) {
+    if (token_arr[0].type != TOKEN_SKPE) return INVALID_OPERANDS;
+    if (token_arr[1].type != TOKEN_REG) return INVALID_OPERANDS;
+    uint16_t opcode = (token_arr[1].value << 8);
+    switch (token_arr[2].type) {
+        case TOKEN_CONST:
+            if (token_arr[2].value >= 0x100) return INVALID_OPERAND_SIZE;
+            opcode |= token_arr[2].value;
+            opcode |= INSTR_FLAG_SKPE_VX_NN;
+            break;
+        case TOKEN_REG:
+            opcode |= (token_arr[2].value << 4);
+            opcode |= INSTR_FLAG_SKPE_VX_VY;
+            break;
+        case TOKEN_EMPTY:
+            opcode |= INSTR_FLAG_SKPE_VX;
+            break;
+        default: return INVALID_OPERANDS;
+    }
+    return write_BE(out, opcode) == 2;
+}
 
+error_t skpne(FILE* out, const token* token_arr) {
+    if (token_arr[0].type != TOKEN_SKPNE) return INVALID_OPERANDS;
+    if (token_arr[1].type != TOKEN_REG) return INVALID_OPERANDS;
+    uint16_t opcode = (token_arr[1].value << 8);
+    switch (token_arr[2].type) {
+        case TOKEN_CONST:
+            if (token_arr[2].value >= 0x100) return INVALID_OPERAND_SIZE;
+            opcode |= token_arr[2].value;
+            opcode |= INSTR_FLAG_SKPNE_VX_NN;
+            break;
+        case TOKEN_REG:
+            opcode |= (token_arr[2].value << 4);
+            opcode |= INSTR_FLAG_SKPNE_VX_VY;
+            break;
+        case TOKEN_EMPTY:
+            opcode |= INSTR_FLAG_SKPNE_VX;
+            break;
+        default: return INVALID_OPERANDS;
+    }
+    return write_BE(out, opcode) == 2;
+}
 
-    uint16_t reg1 = parse_digit(op1[1]);
-    if (reg1 < 0 || reg1 >= 0x10) return -1;
-    uint16_t reg2 = parse_digit(op2[1]);
-    if (reg2 < 0 || reg2 >= 0x10) return -1;
-    reg1 = ((reg1 << 8) | (reg2 << 4) | flag);
-    if (write_BE(out, reg1) != 2) return -1;
-    return 0;
+error_t add(FILE* out, const token* token_arr) {
+    if (token_arr[0].type != TOKEN_ADD) return INVALID_OPERANDS;
+    uint16_t opcode;
+    switch (token_arr[1].type) {
+        case TOKEN_REG:
+            opcode = (token_arr[1].value << 8);
+            switch (token_arr[2].type) {
+                case TOKEN_REG:
+                    opcode |= (token_arr[2].value << 4);
+                    opcode |= INSTR_FLAG_ADD_VX_VY;
+                    break;
+                case TOKEN_CONST:
+                    if (token_arr[2].value >= 0x100) return INVALID_OPERAND_SIZE;
+                    opcode |= (token_arr[2].value);
+                    opcode |= INSTR_FLAG_ADD_VX_NN;
+                    break;
+                default:
+                    return INVALID_OPERANDS;
+                }
+            break;
+        case TOKEN_I:
+            if (token_arr[2].type != TOKEN_REG) return INVALID_OPERANDS;
+            opcode = INSTR_FLAG_ADD_I_VX;
+            opcode |= (token_arr[2].value << 8);
+            break;
+        default: return INVALID_OPERANDS;
+    }
+    return write_BE(out, opcode);
+}
+
+error_t rand_chip8(FILE* out, const token* token_arr) {
+    if (token_arr[0].type != TOKEN_RAND) return INVALID_OPERANDS;     
+    if (token_arr[1].type != TOKEN_REG) return INVALID_OPERANDS;     
+    if (token_arr[2].type != TOKEN_CONST) return INVALID_OPERANDS;     
+    if (token_arr[2].value >= 0x100) return INVALID_OPERAND_SIZE;
+    uint16_t opcode = INSTR_FLAG_RAND;
+    opcode |= (token_arr[1].value << 8);
+    opcode |= (token_arr[2].value);
+    return write_BE(out, opcode);
+}
+
+error_t draw(FILE* out, const token* token_arr) {
+    if (token_arr[0].type != TOKEN_DRAW) return INVALID_OPERANDS;
+    if (token_arr[1].type != TOKEN_REG && token_arr[2].type != TOKEN_REG) return INVALID_OPERANDS;
+    if (token_arr[3].type != TOKEN_CONST) return INVALID_OPERANDS;
+    if (token_arr[3].value >= 0x10) return INVALID_OPERAND_SIZE;
+    uint16_t opcode = INSTR_FLAG_DRAW;
+    opcode |= (token_arr[1].value << 8);
+    opcode |= (token_arr[2].value << 4);
+    opcode |= (token_arr[3].value);
+    return write_BE(out, opcode);
 }
