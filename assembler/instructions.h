@@ -56,9 +56,6 @@ int assemble(FILE* in, FILE* out);
 
 int parse_number(char* word);
 
-//error_t reg_reg_instr(FILE* out, char* op1, char* op2, instr_flags flag);
-//error_t mem_instr(FILE* out, char* line, instr_flags instr);
-
 error_t reg_reg_instr(FILE* out, const token* token_arr);
 error_t mem_instr(FILE* out, const token* token_arr);
 
@@ -68,8 +65,7 @@ error_t skpne(FILE* out, const token* token_arr);
 error_t add(FILE* out, const token* token_arr);
 error_t rand_chip8(FILE* out, const token* token_arr); // this makes me angry
 error_t draw(FILE* out, const token* token_arr);
+error_t unique_F(FILE* out, const token* token_arr);
 
-
-//error_t mov(FILE* out, char* op1, char* op2);
 
 #endif

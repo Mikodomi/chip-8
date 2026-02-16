@@ -22,6 +22,7 @@ int assemble(FILE* in, FILE* out) {
         if (lineptr[0] == ';' || lineptr[0] == '\n') continue;
         token token_arr[MAX_TOKENS];
         amount = tokenize_line(lineptr, token_arr);  
+        // todo: error handling
         switch(token_arr[0].type) {
                 case TOKEN_CLEAR:
                     write_BE(out, INSTR_FLAG_CLEAR);
@@ -60,6 +61,13 @@ int assemble(FILE* in, FILE* out) {
                     break;
                 case TOKEN_DRAW:
                     draw(out, token_arr);
+                    break;
+                case TOKEN_IN: 
+                case TOKEN_HH5:
+                case TOKEN_BCD:
+                case TOKEN_MOVOUT:
+                case TOKEN_MOVIN:
+                    unique_F(out, token_arr);
                     break;
                 default: return -1;
         }
@@ -144,7 +152,7 @@ error_t reg_reg_instr(FILE* out, const token* token_arr) {
         // skpe and skpne implemented seperately
         default: return INVALID_OPERANDS;
     }
-    return write_BE(out, opcode);
+    return write_BE(out, opcode) == 2;
 }
 
 error_t skpe(FILE* out, const token* token_arr) {
@@ -218,7 +226,7 @@ error_t add(FILE* out, const token* token_arr) {
             break;
         default: return INVALID_OPERANDS;
     }
-    return write_BE(out, opcode);
+    return write_BE(out, opcode) == 2;
 }
 
 error_t rand_chip8(FILE* out, const token* token_arr) {
@@ -229,7 +237,7 @@ error_t rand_chip8(FILE* out, const token* token_arr) {
     uint16_t opcode = INSTR_FLAG_RAND;
     opcode |= (token_arr[1].value << 8);
     opcode |= (token_arr[2].value);
-    return write_BE(out, opcode);
+    return write_BE(out, opcode) == 2;
 }
 
 error_t draw(FILE* out, const token* token_arr) {
@@ -241,5 +249,21 @@ error_t draw(FILE* out, const token* token_arr) {
     opcode |= (token_arr[1].value << 8);
     opcode |= (token_arr[2].value << 4);
     opcode |= (token_arr[3].value);
-    return write_BE(out, opcode);
+    return write_BE(out, opcode) == 2;
+}
+
+error_t unique_F(FILE* out, const token* token_arr) {
+    uint16_t opcode;
+    switch (token_arr[0].type) {
+        case TOKEN_IN: opcode = INSTR_FLAG_IN; break;
+        case TOKEN_HH5: opcode = INSTR_FLAG_HH5; break;
+        case TOKEN_BCD: opcode = INSTR_FLAG_BCD; break;
+        case TOKEN_MOVOUT: opcode = INSTR_FLAG_MOVOUT; break;
+        case TOKEN_MOVIN: opcode = INSTR_FLAG_MOVIN; break;
+        default:
+            return INVALID_OPERANDS;
+    }
+    if (token_arr[1].type != TOKEN_REG) return INVALID_OPERANDS;
+    opcode |= (token_arr[1].value << 8);
+    return write_BE(out, opcode) == 2;
 }
