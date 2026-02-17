@@ -5,3 +5,5 @@ init.gdb
 script*
 */build/*
 assembler/checklist.md
+interpreter/c8games/
+interpreter/tests/

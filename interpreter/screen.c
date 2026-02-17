@@ -67,6 +67,10 @@ void screen_draw(const chip8_screen* screen, SDL_Renderer* renderer) {
     SDL_RenderPresent(renderer);
 }
 
+void screen_clear(chip8_screen* screen) {
+    memset(screen->pixels, 0, 32*8);
+}
+
 void screen_destroy(chip8_screen* screen) {
     if (screen->pixels) free(screen->pixels);
 }

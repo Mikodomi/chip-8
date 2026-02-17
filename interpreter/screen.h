@@ -15,6 +15,7 @@ uint8_t screen_get_byte(const chip8_screen* screen, int x, int y);
 int screen_write_byte(chip8_screen* screen, uint8_t byte, int x, int y); // xors with byte
 
 void screen_draw(const chip8_screen* screen, SDL_Renderer* renderer);
+void screen_clear(chip8_screen* screen);
 
 void screen_destroy(chip8_screen* screen);
 

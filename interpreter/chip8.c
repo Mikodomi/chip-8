@@ -5,6 +5,8 @@
 #include <time.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <unistd.h>
+
 #include "sound.h"
 #include "screen.h"
 
@@ -19,6 +21,11 @@
 #define REG2(x) ((x & 0xF000) >> 12)
 #define CONST_VALUE(x) ((x & 0xFF00) >> 8)
 #define MEM_VALUE(x) (((x & 0xFF00) >> 8) | ((x & 0x000F) << 8))
+
+static struct {
+    int disassemble;
+    char* filename;
+} options;
 
 typedef struct {
     // CHIP-8 logic
@@ -50,48 +57,61 @@ int chip8_load_rom(chip8* machine, FILE* rom_input, FILE* fonts_input) {
 
 
 int chip8_decode_2reg(chip8* machine, uint16_t instruction) {
-    size_t reg1 = REG1(instruction), reg2 = REG2(instruction);
+    uint8_t reg1 = REG1(instruction), reg2 = REG2(instruction);
     uint8_t val1 = machine->v[reg1], val2 = machine->v[reg2];
     uint8_t operation = (instruction & 0x0F00) >> 8;
+    uint8_t flag = 0;
     switch (operation) {
         case 0:
-            val1 = val2;
-            break;
-        case 1:
-            val1 |= val2;
-            break;
-        case 2:
-            val1 &= val2;
-            break;
-        case 3:
+            if (options.disassemble) { printf("mov v%X, v%X", reg1, reg2); break; }
+            val1 = val2;                                                   
+            break;                                                         
+        case 1:                                                           
+            if (options.disassemble) { printf("or v%X, v%X", reg1, reg2); break; }
+            val1 |= val2;                                                  
+            break;                                                         
+        case 2:                                                            
+            if (options.disassemble) { printf("and v%X, v%X", reg1, reg2); break; }
+            val1 &= val2;                                                  
+            break;                                                         
+        case 3:                                                            
+            if (options.disassemble) { printf("xor v%X, v%X", reg1, reg2); break; }
             val1 ^= val2;
             break;
         case 4:
+            if (options.disassemble) { printf("add v%X, v%X", reg1, reg2); break; }
+            flag = (val1 + val2) > 0xFF;
             val1 += val2;
-            machine->v[0x0F] = (val1 + val2) > 0xFF;
             break;
         case 5:
-            machine->v[0x0F] = (val1 >= val2);
+            if (options.disassemble) { printf("sub v%X, v%X", reg1, reg2); break; }
+            flag = (val1 >= val2);
             val1 -= val2;
             break;
         case 6:
+            if (options.disassemble) { printf("msr v%X, v%X", reg1, reg2); break; }
             val1 = val2;
-            machine->v[0x0F] = (val1 & 0x01);
+            flag = (val1 & 0x01);
             val1 >>= 1;
             break;
         case 7:
-            machine->v[0x0F] = (val2 >= val1);
+            if (options.disassemble) { printf("subs v%X, v%X", reg1, reg2); break; }
+            flag = (val2 >= val1);
             val1 = val2 - val1;
             break;
         case 0x0E:
+            if (options.disassemble) { printf("msl v%X, v%X", reg1, reg2); break; }
             val1 = val2;
-            machine->v[0x0F] = (val1 & 0x80);
+            flag = (val1 & 0x80);
+            flag >>= 7;
             val1 <<= 1;
             break;
         default:
+            if (options.disassemble) { printf("UNKNOWN INSTRUCTION"); break; }
             return -1;
     }
     machine->v[reg1] = val1;
+    machine->v[0x0F] = flag;
     return 0;
 }
 
@@ -100,12 +120,16 @@ int chip8_decode_zeroes(chip8* machine, uint16_t instruction) {
     uint8_t bottom_bits = MEM_VALUE(instruction);
     switch (bottom_bits) {
         case 0x0E0:
+            if (options.disassemble) { printf("clear"); break; }
+            screen_clear(&machine->screen);
             break;
         case 0x0EE:
-            machine->pc = (*machine->stack_pointer) / 2;
-            *machine->stack_pointer -= 2;
+            if (options.disassemble) { printf("ret"); break; }
+            machine->pc = (*(uint16_t*)machine->stack_pointer) / 2;
+            machine->stack_pointer -= 2;
             break;
         default:
+            if (options.disassemble) { printf("jnat %X", bottom_bits); break; }
             machine->pc = bottom_bits / 2;
             break; // what does "jump to native assembler subroutine" even mean?
     }
@@ -132,7 +156,7 @@ uint8_t get_press_value(SDL_Keycode key) {
         case SDLK_F: return 0xF;
         default: break; //invalid
     }
-    return 0xFF;
+    return 0x10;
 }
 
 uint8_t chip8_poll_keypress() {
@@ -153,34 +177,41 @@ uint8_t chip8_poll_keypress() {
 int chip8_F_instructions(chip8* machine, uint16_t instruction) {
     int status = 0;
     uint8_t key;
-    size_t reg1 = REG1(instruction);
+    uint8_t reg1 = REG1(instruction);
     uint16_t value = CONST_VALUE(instruction);
     uint8_t temp;
     switch (value) {
         case 0x07:
+            if (options.disassemble) { printf("mov v%X, dtm", reg1); break; }
             machine->v[reg1] = machine->delay_timer;
             break;
         case 0x0A: 
+            if (options.disassemble) { printf("in, v%X", reg1); break; }
             machine->v[reg1] &= 0xFFF0;
             key = chip8_poll_keypress();
             if (key == 0xFF) return -1;
             machine->v[reg1] |= key;
             break;
         case 0x15: 
+            if (options.disassemble) { printf("mov dtm, v%X", reg1); break; }
             machine->delay_timer = machine->v[reg1];
             break;
         case 0x18: 
+            if (options.disassemble) { printf("mov stm, v%X", reg1); break; }
             machine->sound_timer = machine->v[reg1];
             unpause_audio(&machine->sound);
             break;
         case 0x1E: 
+            if (options.disassemble) { printf("add I, v%X", reg1); break; }
             machine->address += machine->v[reg1];
             break;
         case 0x29: 
+            if (options.disassemble) { printf("hh5 v%X", reg1); break; }
             // my fonts start at address 0
             machine->address = (machine->v[reg1] & 0x00FF) * 5;
             break;
         case 0x33: 
+            if (options.disassemble) { printf("bcd v%X", reg1); break; }
             temp = machine->v[reg1];
             (machine->mem[machine->address+2]) = temp % 10;
             temp /= 10;
@@ -189,43 +220,50 @@ int chip8_F_instructions(chip8* machine, uint16_t instruction) {
             (machine->mem[machine->address]) = temp % 10;
             break;
         case 0x55: 
+            if (options.disassemble) { printf("movout v%X", reg1); break; }
             for (int i = 0; i<=reg1; i++) {
                 machine->mem[machine->address+i] = machine->v[i];
             }
             machine->address += reg1+1;
             break;
         case 0x65: 
+            if (options.disassemble) { printf("movin v%X", reg1); break; }
             for (int i = 0; i<=reg1; i++) {
                 machine->v[i] = machine->mem[machine->address+i];
             }
             machine->address += reg1+1;
             break;
         default:
+            if (options.disassemble) { printf("UNKNOWN INSTRUCTION"); break; }
             status = -1;
     }
     return status;
 }
 
 
-int chip8_E_instructions(chip8* machine, uint16_t instruction) {
+int chip8_E_instructions(chip8* machine, uint16_t instruction, uint8_t key_value) {
     int value = CONST_VALUE(instruction);
     int reg1 = REG1(instruction);
-    uint8_t key_value = 0xFF;
+    //uint8_t key_value = 0xFF;
     uint8_t expected_value = (machine->v[reg1] & 0x000F);
     SDL_Event e;
-    while (SDL_PollEvent(&e)) {
-        if (e.type == SDL_EVENT_KEY_DOWN) {
-            key_value = get_press_value(e.key.key);
-        }
-    }
+    //while (SDL_PollEvent(&e)) {
+    //    if (e.type == SDL_EVENT_KEY_DOWN) {
+    //        key_value = get_press_value(e.key.key);
+    //    }
+    //}
     switch (value) {
         case 0x9E:
+            if (options.disassemble) { printf("skpe v%X", reg1); break; }
             machine->pc += (key_value == expected_value);
             break;
         case 0xA1:
+            if (options.disassemble) { printf("skpne v%X", reg1); break; }
             machine->pc += (key_value != expected_value);
             break;
-        default: return -1;
+        default: 
+            if (options.disassemble) { printf("UNKNOWN INSTRUCTION"); break; }
+            return -1;
     }
     return 0;
 }
@@ -243,84 +281,78 @@ int chip8_draw(chip8* machine, int reg1, int reg2, int value) {
     return 0;
 }
 
-int chip8_decode_execute(chip8* machine, uint16_t instruction) {
+int chip8_decode_execute(chip8* machine, uint16_t instruction, uint8_t key_value) {
     int status = 0;
-    size_t reg1, reg2;
-    uint8_t value;
+    uint8_t reg1 = REG1(instruction), reg2 = REG2(instruction);
+    uint8_t value = CONST_VALUE(instruction);
     uint8_t first_4_bits = (instruction & 0x00F0) >> 4;
     uint8_t zero;
-    uint16_t addr;
+    uint16_t addr = MEM_VALUE(instruction);
     switch (first_4_bits) {
         case 0: 
             status = chip8_decode_zeroes(machine, instruction);
             break;
         case 1: 
-            addr = MEM_VALUE(instruction);
+            if (options.disassemble) { printf("jmp %X", addr); break; }
             machine->pc = addr / 2;
             break;
         case 2: 
-            *machine->stack_pointer += 2;
-            *machine->stack_pointer = machine->pc * 2;
-            addr = MEM_VALUE(instruction);
+            if (options.disassemble) { printf("call %X", addr); break; }
+            machine->stack_pointer += 2;
+            *(uint16_t*)machine->stack_pointer = machine->pc * 2;
             machine->pc = addr / 2;
             break;
         case 3: 
-            reg1 = REG1(instruction);
-            value = CONST_VALUE(instruction);
+            if (options.disassemble) { printf("skpe v%X, %d", reg1, value); break; }
             machine->pc += (machine->v[reg1] == value);
             break;
         case 4: 
-            reg1 = REG1(instruction);
-            value = CONST_VALUE(instruction);
+            if (options.disassemble) { printf("skpne v%X, %d", reg1, value); break; }
             machine->pc += (machine->v[reg1] != value);
             break;
         case 5: 
+            if (options.disassemble) { printf("skpe v%X, v%X", reg1, reg2); break; }
             zero = (instruction & 0x0F00) >> 8;
             if (zero != 0) { status = -1; break; }
-            reg1 = REG1(instruction);
-            reg2 = REG2(instruction);
             machine->pc += (machine->v[reg1] == machine->v[reg2]);
             break;
         case 6: 
-            reg1 = REG1(instruction);
-            value = CONST_VALUE(instruction); 
+            if (options.disassemble) { printf("mov v%X, %d", reg1, value); break; }
             machine->v[reg1] = value;
             break;
         case 7: 
-            reg1 = REG1(instruction);
-            value = CONST_VALUE(instruction);
+            if (options.disassemble) { printf("add v%X, %d", reg1, value); break; }
             machine->v[reg1] += value;
             break;
         case 8: 
             status = chip8_decode_2reg(machine, instruction);
             break;
         case 9: 
+            if (options.disassemble) { printf("skpne v%X, v%X", reg1, reg2); break; }
             zero = (instruction & 0x0F00) >> 8;
             if (zero != 0) { status = -1; break; }
-            reg1 = REG1(instruction);
-            reg2 = REG2(instruction);
             machine->pc += (machine->v[reg1] != machine->v[reg2]);
             break;
         case 0xA: 
-            addr = MEM_VALUE(instruction);      
+            if (options.disassemble) { printf("mov I, %d", addr); break; }
             machine->address = addr;
             break;
         case 0xB: 
+            if (options.disassemble) { printf("jv0, %d", addr); break; }
             addr = MEM_VALUE(instruction) + machine->v[0];
             machine->pc = addr / 2;
             break;
         case 0xC: 
-            reg1 = REG1(instruction);
-            value = CONST_VALUE(instruction);
+            if (options.disassemble) { printf("rand v%X, %d", reg1, value); break; }
             machine->v[reg1] = rand() & value;
             break;
         case 0xD: 
-            reg1 = REG1(instruction);
-            reg2 = REG2(instruction);
             value = (instruction & 0x0F00) >> 8;
+            if (options.disassemble) { printf("draw v%X, v%X, %d", reg1, reg2, value); break; }
             chip8_draw(machine, reg1, reg2, value);
+            break;
         case 0xE: 
-            chip8_E_instructions(machine, instruction);
+            chip8_E_instructions(machine, instruction, key_value);
             break; 
         case 0xF: 
             chip8_F_instructions(machine, instruction);
@@ -331,26 +363,39 @@ int chip8_decode_execute(chip8* machine, uint16_t instruction) {
     return status;
 }
 
-int quit() {
+uint8_t quit() {
     SDL_Event e; 
     if (SDL_PollEvent(&e)) {
-        if (e.type == SDL_EVENT_QUIT) {
-            return 1; 
+        if (e.type == SDL_EVENT_KEY_DOWN) {
+            return get_press_value(e.key.key);
+        } else if (e.type == SDL_EVENT_QUIT) {
+            return 0xFF;
         }
     } // deal with keypresses later
-    return 0;
+    return 0x10;
 }
 
 int chip8_fde_cycle(chip8* machine) { // fetch decode execute
     int status = 0;
     uint16_t instruction;
-    for (;(2*(machine->pc-0x200)) < machine->size;) {
-        if (quit()) return status;
+    uint8_t key_value;
+    uint8_t exit_code;
+    for (;(2*(machine->pc-0x100)) < machine->size;) {
+        instruction = ((uint16_t*)machine->mem)[machine->pc]; 
+        exit_code = quit();
+        if (exit_code == 0xFF) return status;
+        if (exit_code != 0x10) key_value = exit_code;
+        if (options.disassemble) {
+            printf("%X:\t%X\n\t", machine->pc*2, instruction);
+            chip8_decode_execute(machine, instruction, key_value);
+            printf("\n");
+            machine->pc++;
+            continue;
+        }
         if (restart_audio(&machine->sound) < 0) return -1;
         screen_draw(&machine->screen, machine->sdl_renderer);
-        instruction = ((uint16_t*)machine->mem)[machine->pc]; 
         machine->pc++;
-        status = chip8_decode_execute(machine, instruction);
+        status = chip8_decode_execute(machine, instruction, key_value);
         if (status != 0) break;
     }
     return status;
@@ -380,7 +425,7 @@ int chip8_init(chip8* machine, char* title) {
     if(screen_create(&machine->screen) < 0) {
         return -1; 
     }
-
+    if (options.disassemble) return 0;
     if (!SDL_CreateWindowAndRenderer(title, 
                 SCREEN_HEIGHT, SCREEN_WIDTH,
                 SDL_WINDOW_RESIZABLE,
@@ -412,13 +457,29 @@ void chip8_destroy(chip8* machine) {
     destroy_audio(&machine->sound);
 }
 
+int opts_init(int argc, char **argv) {
+    int opt;
+
+    while ((opt = getopt(argc, argv, "d")) != -1) {
+        switch (opt) {
+            case 'd':
+                options.disassemble = 1;
+                break;
+        }
+    }
+    return optind;
+}
+
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        printf("usage: %s <rom_name>\n", argv[0]);
+        printf("usage: %s [-d] <rom_name>\n", argv[0]);
         return -1;
     }
-    FILE* rom = fopen(argv[1], "rb");
+
+    int file_ind = opts_init(argc, argv); 
+
+    FILE* rom = fopen(argv[file_ind], "rb");
     if (rom == NULL) {
         perror("fopen");
         return -1;
@@ -429,14 +490,15 @@ int main(int argc, char **argv) {
         perror("fopen");
         fprintf(stderr, "font file not found - fonts not available");
     }
-
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_AUDIO)) {
-        fclose(rom);
-        fclose(fonts);
-        return -1;
+    if (!options.disassemble) {
+        if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_AUDIO)) {
+            fclose(rom);
+            fclose(fonts);
+            return -1;
+        }
     }
     chip8 machine;
-    if (chip8_init(&machine, argv[1]) < 0) {
+    if (chip8_init(&machine, argv[file_ind]) < 0) {
         fprintf(stderr, "error during initialization\n");
         fclose(rom);
         fclose(fonts);
@@ -448,7 +510,6 @@ int main(int argc, char **argv) {
     fclose(fonts);
 
     chip8_fde_cycle(&machine);
-    screen_write_byte(&machine.screen, 0b10101010, 32, 16);
 
     chip8_destroy(&machine);
     SDL_Quit();
