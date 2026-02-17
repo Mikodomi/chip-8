@@ -5,6 +5,7 @@
 #include <time.h>
 #include <stdlib.h>
 #include <errno.h>
+#include "sound.h"
 #include "screen.h"
 
 #define MEM_SIZE 4096
@@ -29,6 +30,7 @@ typedef struct {
     uint8_t         delay_timer;
     uint8_t         sound_timer;
     chip8_screen    screen;
+    audio           sound;
 
     // SDL
     SDL_Window*     sdl_window;
@@ -169,6 +171,7 @@ int chip8_F_instructions(chip8* machine, uint16_t instruction) {
             break;
         case 0x18: 
             machine->sound_timer = machine->v[reg1];
+            unpause_audio(&machine->sound);
             break;
         case 0x1E: 
             machine->address += machine->v[reg1];
@@ -343,6 +346,7 @@ int chip8_fde_cycle(chip8* machine) { // fetch decode execute
     uint16_t instruction;
     for (;(2*(machine->pc-0x200)) < machine->size;) {
         if (quit()) return status;
+        if (restart_audio(&machine->sound) < 0) return -1;
         screen_draw(&machine->screen, machine->sdl_renderer);
         instruction = ((uint16_t*)machine->mem)[machine->pc]; 
         machine->pc++;
@@ -352,15 +356,14 @@ int chip8_fde_cycle(chip8* machine) { // fetch decode execute
     return status;
 }
 
-void play_sound() {
-     
-}
 
 Uint32 chip8_decrease_timers(void* userdata, SDL_TimerID time, Uint32 interval) {
     chip8* machine = (chip8*)userdata;    
     if (machine->delay_timer != 0) machine->delay_timer--;
-    if (machine->sound_timer != 0) {
-        play_sound();
+    if (machine->sound_timer > 0) {
+        machine->sound_timer--;
+    } else if (machine->sound_timer == 0) { 
+        if (pause_audio(&machine->sound) < 0) return -1;
         machine->sound_timer--;
     }
     return 1000/TIMER_FREQUENCY;
@@ -386,7 +389,13 @@ int chip8_init(chip8* machine, char* title) {
         return -1;       
     }
     SDL_SetRenderLogicalPresentation(machine->sdl_renderer, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_LOGICAL_PRESENTATION_LETTERBOX);
+
     SDL_AddTimer(1000/TIMER_FREQUENCY, chip8_decrease_timers, machine);
+
+    if (create_audio(&machine->sound) < 0) {
+        return -1;
+    }
+
     return 0;
 }
 
@@ -400,6 +409,7 @@ void chip8_destroy(chip8* machine) {
         }
     }
     screen_destroy(&machine->screen);
+    destroy_audio(&machine->sound);
 }
 
 
@@ -420,7 +430,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "font file not found - fonts not available");
     }
 
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_AUDIO)) {
         fclose(rom);
         fclose(fonts);
         return -1;
@@ -439,9 +449,6 @@ int main(int argc, char **argv) {
 
     chip8_fde_cycle(&machine);
     screen_write_byte(&machine.screen, 0b10101010, 32, 16);
-    while (!quit()) {
-        screen_draw(&machine.screen, machine.sdl_renderer);
-    }
 
     chip8_destroy(&machine);
     SDL_Quit();
