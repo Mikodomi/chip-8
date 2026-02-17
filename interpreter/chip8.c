@@ -109,8 +109,42 @@ int chip8_decode_zeroes(chip8* machine, uint16_t instruction) {
     return status;
 }
 
+uint8_t chip8_get_keypress() {
+    int quit = 0;
+    while (!quit) {
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+            if (e.type == SDL_EVENT_KEY_DOWN) {
+                switch (e.key.key) {
+                    case SDLK_0: return 0;
+                    case SDLK_1: return 1;
+                    case SDLK_2: return 2;
+                    case SDLK_3: return 3;
+                    case SDLK_4: return 4;
+                    case SDLK_5: return 5;
+                    case SDLK_6: return 6;
+                    case SDLK_7: return 7;
+                    case SDLK_8: return 8;
+                    case SDLK_9: return 9;
+                    case SDLK_A: return 0xA;
+                    case SDLK_B: return 0xB;
+                    case SDLK_C: return 0xC;
+                    case SDLK_D: return 0xD;
+                    case SDLK_E: return 0xE;
+                    case SDLK_F: return 0xF;
+                    default: break; //invalid
+                }
+            } else if (e.type == SDL_EVENT_QUIT) {
+                return 0xFF;
+            }
+        }
+    }
+    return 0xFF;
+}
+
 int chip8_F_instructions(chip8* machine, uint16_t instruction) {
     int status = 0;
+    uint8_t key;
     size_t reg1 = REG1(instruction);
     uint16_t value = CONST_VALUE(instruction);
     uint8_t temp;
@@ -118,7 +152,12 @@ int chip8_F_instructions(chip8* machine, uint16_t instruction) {
         case 0x07:
             machine->v[reg1] = machine->delay_timer;
             break;
-        case 0x0A: break;
+        case 0x0A: 
+            machine->v[reg1] &= 0xFFF0;
+            key = chip8_get_keypress();
+            if (key == 0xFF) return -1;
+            machine->v[reg1] |= key;
+            break;
         case 0x15: 
             machine->delay_timer = machine->v[reg1];
             break;
@@ -128,7 +167,10 @@ int chip8_F_instructions(chip8* machine, uint16_t instruction) {
         case 0x1E: 
             machine->address += machine->v[reg1];
             break;
-        case 0x29: break;
+        case 0x29: 
+            // my fonts start at address 0
+            machine->address = (machine->v[reg1] & 0x00FF) * 5;
+            break;
         case 0x33: 
             temp = machine->v[reg1];
             (machine->mem[machine->address+2]) = temp % 10;
@@ -139,13 +181,15 @@ int chip8_F_instructions(chip8* machine, uint16_t instruction) {
             break;
         case 0x55: 
             for (int i = 0; i<=reg1; i++) {
-                machine->mem[machine->address+2*i] = machine->v[i];
+                machine->mem[machine->address+i] = machine->v[i];
             }
+            machine->address += reg1+1;
             break;
         case 0x65: 
             for (int i = 0; i<=reg1; i++) {
-                machine->v[i] = machine->mem[machine->address+2*i];
+                machine->v[i] = machine->mem[machine->address+i];
             }
+            machine->address += reg1+1;
             break;
         default:
             status = -1;
