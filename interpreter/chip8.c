@@ -11,6 +11,7 @@
 #define REG_COUNT 16
 #define SCREEN_WIDTH 64
 #define SCREEN_HEIGHT 32
+#define TIMER_FREQUENCY 60
 
 // takes original 16 bits as input (in big endian order)
 #define REG1(x) (x & 0x000F)
@@ -321,7 +322,6 @@ int chip8_decode_execute(chip8* machine, uint16_t instruction) {
         case 0xF: 
             chip8_F_instructions(machine, instruction);
             break;
-
         default:
             status = -1;
     }
@@ -352,9 +352,18 @@ int chip8_fde_cycle(chip8* machine) { // fetch decode execute
     return status;
 }
 
-void chip8_decrease_timer(chip8* machine) {
-    if (machine->delay_timer == 0) return;
-    machine->delay_timer--;
+void play_sound() {
+     
+}
+
+Uint32 chip8_decrease_timers(void* userdata, SDL_TimerID time, Uint32 interval) {
+    chip8* machine = (chip8*)userdata;    
+    if (machine->delay_timer != 0) machine->delay_timer--;
+    if (machine->sound_timer != 0) {
+        play_sound();
+        machine->sound_timer--;
+    }
+    return 1000/TIMER_FREQUENCY;
 }
 
 int chip8_init(chip8* machine, char* title) {
@@ -377,6 +386,7 @@ int chip8_init(chip8* machine, char* title) {
         return -1;       
     }
     SDL_SetRenderLogicalPresentation(machine->sdl_renderer, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_LOGICAL_PRESENTATION_LETTERBOX);
+    SDL_AddTimer(1000/TIMER_FREQUENCY, chip8_decrease_timers, machine);
     return 0;
 }
 
