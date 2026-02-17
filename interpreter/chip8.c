@@ -109,31 +109,36 @@ int chip8_decode_zeroes(chip8* machine, uint16_t instruction) {
     return status;
 }
 
-uint8_t chip8_get_keypress() {
+uint8_t get_press_value(SDL_Keycode key) {
+    switch (key) {
+        case SDLK_0: return 0;
+        case SDLK_1: return 1;
+        case SDLK_2: return 2;
+        case SDLK_3: return 3;
+        case SDLK_4: return 4;
+        case SDLK_5: return 5;
+        case SDLK_6: return 6;
+        case SDLK_7: return 7;
+        case SDLK_8: return 8;
+        case SDLK_9: return 9;
+        case SDLK_A: return 0xA;
+        case SDLK_B: return 0xB;
+        case SDLK_C: return 0xC;
+        case SDLK_D: return 0xD;
+        case SDLK_E: return 0xE;
+        case SDLK_F: return 0xF;
+        default: break; //invalid
+    }
+    return 0xFF;
+}
+
+uint8_t chip8_poll_keypress() {
     int quit = 0;
     while (!quit) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_EVENT_KEY_DOWN) {
-                switch (e.key.key) {
-                    case SDLK_0: return 0;
-                    case SDLK_1: return 1;
-                    case SDLK_2: return 2;
-                    case SDLK_3: return 3;
-                    case SDLK_4: return 4;
-                    case SDLK_5: return 5;
-                    case SDLK_6: return 6;
-                    case SDLK_7: return 7;
-                    case SDLK_8: return 8;
-                    case SDLK_9: return 9;
-                    case SDLK_A: return 0xA;
-                    case SDLK_B: return 0xB;
-                    case SDLK_C: return 0xC;
-                    case SDLK_D: return 0xD;
-                    case SDLK_E: return 0xE;
-                    case SDLK_F: return 0xF;
-                    default: break; //invalid
-                }
+                return get_press_value(e.key.key);
             } else if (e.type == SDL_EVENT_QUIT) {
                 return 0xFF;
             }
@@ -154,7 +159,7 @@ int chip8_F_instructions(chip8* machine, uint16_t instruction) {
             break;
         case 0x0A: 
             machine->v[reg1] &= 0xFFF0;
-            key = chip8_get_keypress();
+            key = chip8_poll_keypress();
             if (key == 0xFF) return -1;
             machine->v[reg1] |= key;
             break;
@@ -195,6 +200,30 @@ int chip8_F_instructions(chip8* machine, uint16_t instruction) {
             status = -1;
     }
     return status;
+}
+
+
+int chip8_E_instructions(chip8* machine, uint16_t instruction) {
+    int value = CONST_VALUE(instruction);
+    int reg1 = REG1(instruction);
+    uint8_t key_value = 0xFF;
+    uint8_t expected_value = (machine->v[reg1] & 0x000F);
+    SDL_Event e;
+    while (SDL_PollEvent(&e)) {
+        if (e.type == SDL_EVENT_KEY_DOWN) {
+            key_value = get_press_value(e.key.key);
+        }
+    }
+    switch (value) {
+        case 0x9E:
+            machine->pc += (key_value == expected_value);
+            break;
+        case 0xA1:
+            machine->pc += (key_value != expected_value);
+            break;
+        default: return -1;
+    }
+    return 0;
 }
 
 int chip8_draw(chip8* machine, int reg1, int reg2, int value) {
@@ -286,7 +315,9 @@ int chip8_decode_execute(chip8* machine, uint16_t instruction) {
             reg2 = REG2(instruction);
             value = (instruction & 0x0F00) >> 8;
             chip8_draw(machine, reg1, reg2, value);
-        case 0xE: break; 
+        case 0xE: 
+            chip8_E_instructions(machine, instruction);
+            break; 
         case 0xF: 
             chip8_F_instructions(machine, instruction);
             break;
