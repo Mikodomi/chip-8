@@ -3,7 +3,7 @@
 
 int create_audio(audio* aud) {
     if (!SDL_WasInit(SDL_INIT_AUDIO)) return -1;
-    if (!SDL_LoadWAV("square.wav", &aud->spec, &aud->audiobuf, &aud->audiolen)) {
+    if (!SDL_LoadWAV("assets/square.wav", &aud->spec, &aud->audiobuf, &aud->audiolen)) {
         SDL_Log("Couldn't load WAV file: %s\n", SDL_GetError());
         return -1;
     }

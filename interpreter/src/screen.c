@@ -25,20 +25,30 @@ uint8_t screen_get_byte(const chip8_screen* screen, int x, int y) {
     return (uint8_t)mask;
 }
 
+uint64_t left_rotate(uint64_t in, int a) {
+    a = a % 64;
+    uint64_t temp = in >> (64 - a);
+    in <<= a;
+    return in | temp;
+}
+
+uint64_t right_rotate(uint64_t in, int a) {
+    a = a % 64;
+    uint64_t temp = in << (64 - a);
+    in >>= a;
+    return in | temp;
+}
 
 int screen_write_byte(chip8_screen* screen, uint8_t byte, int x, int y) {
-    if (x >= 64 || y >= 32) return -1;
-    if (x < 0 || y < 0) return -1;
     int changed = 0;
     uint64_t mask = 0;
     mask |= byte;
-    if (x > 64-8) {
-        mask >>= (x+8-64);
-    } else {
-        mask <<= (64-8 - x);
-    }
-    changed = screen->pixels[y] & mask;
-    screen->pixels[y] ^= mask;
+    uint64_t curr = screen->pixels[y];
+    curr = left_rotate(curr, x+8);
+    changed = ((uint8_t)curr & mask);
+    curr ^= mask;
+    curr = right_rotate(curr, x+8);    
+    screen->pixels[y] = curr;
     return changed;
 }
 
@@ -68,7 +78,7 @@ void screen_draw(const chip8_screen* screen, SDL_Renderer* renderer) {
 }
 
 void screen_clear(chip8_screen* screen) {
-    memset(screen->pixels, 0, 32*8);
+    memset(screen->pixels, 0, 32*sizeof(uint64_t));
 }
 
 void screen_destroy(chip8_screen* screen) {
