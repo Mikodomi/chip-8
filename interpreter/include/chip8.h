@@ -34,20 +34,37 @@ typedef struct {
     uint16_t size;
 } chip8;
 
-int chip8_init(chip8* machine, char* title);
+typedef enum {
+    SUCCESS,
+
+    ERR_QUIT,
+
+    ERR_INIT_SDL,
+    ERR_INIT_SCREEN,
+    ERR_INIT_AUDIO,
+
+    ERR_AUDIO_PAUSE,
+    ERR_AUDIO_UNPAUSE,
+
+    ERR_INSTR_INVALID,
+} error_t;
+
+void chip8_handle_error(chip8* machine, uint16_t instruction, error_t status);
+
+error_t chip8_init(chip8* machine, char* title);
 void chip8_destroy(chip8* machine);
 
 int chip8_load_rom(chip8* machine, FILE* rom_input, FILE* fonts_input);
 
-int chip8_fde_cycle(chip8* machine); // fetch decode execute
+error_t chip8_fde_cycle(chip8* machine); // fetch decode execute
 
-int chip8_decode_execute(chip8* machine, uint16_t instruction);
+error_t chip8_decode_execute(chip8* machine, uint16_t instruction);
 
-int chip8_decode_zeroes(chip8* machine, uint16_t instruction);
-int chip8_decode_2reg(chip8* machine, uint16_t instruction);
-int chip8_draw(chip8* machine, int reg1, int reg2, int value);
-int chip8_E_instructions(chip8* machine, uint16_t instruction);
-int chip8_F_instructions(chip8* machine, uint16_t instruction);
+error_t chip8_decode_zeroes(chip8* machine, uint16_t instruction);
+error_t chip8_decode_2reg(chip8* machine, uint16_t instruction);
+void chip8_draw(chip8* machine, int reg1, int reg2, int value);
+error_t chip8_E_instructions(chip8* machine, uint16_t instruction);
+error_t chip8_F_instructions(chip8* machine, uint16_t instruction);
 int chip8_poll_keypress(chip8* machine);
 
 // SDL Timer callback

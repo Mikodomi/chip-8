@@ -23,7 +23,30 @@
 #define CONST_VALUE(x) ((x & 0xFF00) >> 8)
 #define MEM_VALUE(x) (((x & 0xFF00) >> 8) | ((x & 0x000F) << 8))
 
-int chip8_init(chip8* machine, char* title) {
+void chip8_handle_error(chip8* machine, uint16_t instruction, error_t status) {
+    switch (status) {
+        case SUCCESS: break; // should never get here
+        case ERR_INIT_SDL:
+            SDL_Log("error during sdl initialization");
+            break;
+        case ERR_INIT_SCREEN:
+            SDL_Log("error during screen initialization");
+            break;
+        case ERR_INIT_AUDIO:
+            SDL_Log("error during audio initialization");
+            break;
+        case ERR_AUDIO_PAUSE:
+        case ERR_AUDIO_UNPAUSE:
+            SDL_Log("error during audio un/pause");
+            break;
+        case ERR_INSTR_INVALID:
+            SDL_Log("invalid instruction at %x: %x\n", machine->pc*2, instruction);
+        case ERR_QUIT: break; // is okay
+        default: printf("unknown error LOL");
+    }
+}
+
+error_t chip8_init(chip8* machine, char* title) {
     srand(time(NULL)); 
     memset(machine, 0, sizeof(chip8));
 
@@ -32,7 +55,7 @@ int chip8_init(chip8* machine, char* title) {
     machine->delay_timer = 0;
 
     if(screen_create(&machine->screen) < 0) {
-        return -1; 
+        return ERR_INIT_SCREEN; 
     }
     if (options.disassemble) return 0;
     if (!SDL_CreateWindowAndRenderer(title, 
@@ -40,21 +63,25 @@ int chip8_init(chip8* machine, char* title) {
                 SDL_WINDOW_RESIZABLE,
                 &machine->sdl_window, &machine->sdl_renderer)) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "%s", SDL_GetError());
-        return -1;       
+        return ERR_INIT_SDL;       
     }
     SDL_SetRenderLogicalPresentation(machine->sdl_renderer, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_LOGICAL_PRESENTATION_LETTERBOX);
 
     if (create_audio(&machine->sound) < 0) {
-        return -1;
+        return ERR_INIT_AUDIO;
     }
 
-    SDL_AddTimer(1000/TIMER_FREQUENCY, chip8_decrease_timers, machine);
+    machine->sdl_timerID = SDL_AddTimer(1000/TIMER_FREQUENCY, chip8_decrease_timers, machine);
 
-    return 0;
+    return SUCCESS;
 }
 
 void chip8_destroy(chip8* machine) {
     SDL_RemoveTimer(machine->sdl_timerID);
+    screen_destroy(&machine->screen);
+    if (SDL_WasInit(SDL_INIT_AUDIO)) {
+        destroy_audio(&machine->sound);
+    }
     if (SDL_WasInit(SDL_INIT_VIDEO)) {
         if (machine->sdl_renderer)  {
             SDL_DestroyRenderer(machine->sdl_renderer);
@@ -63,8 +90,6 @@ void chip8_destroy(chip8* machine) {
             SDL_DestroyWindow(machine->sdl_window);
         }
     }
-    screen_destroy(&machine->screen);
-    destroy_audio(&machine->sound);
 }
 
 int chip8_load_rom(chip8* machine, FILE* rom_input, FILE* fonts_input) {
@@ -76,8 +101,8 @@ int chip8_load_rom(chip8* machine, FILE* rom_input, FILE* fonts_input) {
     return bytes_read;
 }
 
-int chip8_fde_cycle(chip8* machine) { // fetch decode execute
-    int status = 0;
+error_t chip8_fde_cycle(chip8* machine) { // fetch decode execute
+    error_t status = 0;
     uint16_t instruction;
     for (;2*(machine->pc-0x100) < machine->size; ) {
         instruction = ((uint16_t*)machine->mem)[machine->pc]; 
@@ -93,13 +118,15 @@ int chip8_fde_cycle(chip8* machine) { // fetch decode execute
         screen_draw(&machine->screen, machine->sdl_renderer);
         machine->pc++;
         status = chip8_decode_execute(machine, instruction);
-        if (status != 0) return status;
+        if (status != SUCCESS) {
+            chip8_handle_error(machine, instruction, status);
+            break;
+        }
     }
-    return 0;
+    return SUCCESS;
 }
 
-int chip8_decode_execute(chip8* machine, uint16_t instruction) {
-    int status = 0;
+error_t chip8_decode_execute(chip8* machine, uint16_t instruction) {
     uint8_t reg1 = REG1(instruction), reg2 = REG2(instruction);
     uint8_t value = CONST_VALUE(instruction);
     uint8_t first_4_bits = (instruction & 0x00F0) >> 4;
@@ -107,8 +134,7 @@ int chip8_decode_execute(chip8* machine, uint16_t instruction) {
     uint16_t addr = MEM_VALUE(instruction);
     switch (first_4_bits) {
         case 0: 
-            status = chip8_decode_zeroes(machine, instruction);
-            break;
+            return chip8_decode_zeroes(machine, instruction);
         case 1: 
             if (options.disassemble) { printf("jmp %X", addr); break; }
             machine->pc = addr / 2;
@@ -130,7 +156,7 @@ int chip8_decode_execute(chip8* machine, uint16_t instruction) {
         case 5: 
             if (options.disassemble) { printf("skpe v%X, v%X", reg1, reg2); break; }
             zero = (instruction & 0x0F00) >> 8;
-            if (zero != 0) { status = -1; break; }
+            if (zero != 0) return ERR_INSTR_INVALID;
             machine->pc += (machine->v[reg1] == machine->v[reg2]);
             break;
         case 6: 
@@ -142,12 +168,12 @@ int chip8_decode_execute(chip8* machine, uint16_t instruction) {
             machine->v[reg1] += value;
             break;
         case 8: 
-            status = chip8_decode_2reg(machine, instruction);
+            return chip8_decode_2reg(machine, instruction);
             break;
         case 9: 
             if (options.disassemble) { printf("skpne v%X, v%X", reg1, reg2); break; }
             zero = (instruction & 0x0F00) >> 8;
-            if (zero != 0) { status = -1; break; }
+            if (zero != 0) return ERR_INSTR_INVALID;
             machine->pc += (machine->v[reg1] != machine->v[reg2]);
             break;
         case 0xA: 
@@ -169,19 +195,18 @@ int chip8_decode_execute(chip8* machine, uint16_t instruction) {
             chip8_draw(machine, reg1, reg2, value);
             break;
         case 0xE: 
-            chip8_E_instructions(machine, instruction);
+            return chip8_E_instructions(machine, instruction);
             break; 
         case 0xF: 
-            chip8_F_instructions(machine, instruction);
+            return chip8_F_instructions(machine, instruction);
             break;
         default:
-            status = -1;
+            return ERR_INSTR_INVALID;
     }
-    return status;
+    return SUCCESS;
 }
 
-int chip8_decode_zeroes(chip8* machine, uint16_t instruction) {
-    int status = 0;
+error_t chip8_decode_zeroes(chip8* machine, uint16_t instruction) {
     uint8_t bottom_bits = MEM_VALUE(instruction);
     switch (bottom_bits) {
         case 0x0E0:
@@ -198,10 +223,10 @@ int chip8_decode_zeroes(chip8* machine, uint16_t instruction) {
             machine->pc = bottom_bits / 2;
             break; // what does "jump to native assembler subroutine" even mean?
     }
-    return status;
+    return SUCCESS;
 }
 
-int chip8_decode_2reg(chip8* machine, uint16_t instruction) {
+error_t chip8_decode_2reg(chip8* machine, uint16_t instruction) {
     uint8_t reg1 = REG1(instruction), reg2 = REG2(instruction);
     uint8_t val1 = machine->v[reg1], val2 = machine->v[reg2];
     uint8_t operation = (instruction & 0x0F00) >> 8;
@@ -253,14 +278,14 @@ int chip8_decode_2reg(chip8* machine, uint16_t instruction) {
             break;
         default:
             if (options.disassemble) { printf("UNKNOWN INSTRUCTION"); break; }
-            return -1;
+            return ERR_INSTR_INVALID;
     }
     machine->v[reg1] = val1;
     machine->v[0x0F] = flag;
-    return 0;
+    return SUCCESS;
 }
 
-int chip8_draw(chip8* machine, int reg1, int reg2, int value) {
+void chip8_draw(chip8* machine, int reg1, int reg2, int value) {
     int x = machine->v[reg1];
     int y = machine->v[reg2];
     int changed = 0;
@@ -270,10 +295,9 @@ int chip8_draw(chip8* machine, int reg1, int reg2, int value) {
     if (changed) {
         machine->v[0xF] = 1;
     }
-    return 0;
 }
 
-int chip8_E_instructions(chip8* machine, uint16_t instruction) {
+error_t chip8_E_instructions(chip8* machine, uint16_t instruction) {
     int value = CONST_VALUE(instruction);
     int reg1 = REG1(instruction);
     uint8_t expected_value = (machine->v[reg1] & 0x000F);
@@ -288,13 +312,13 @@ int chip8_E_instructions(chip8* machine, uint16_t instruction) {
             break;
         default: 
             if (options.disassemble) { printf("UNKNOWN INSTRUCTION"); break; }
-            return -1;
+            return ERR_INSTR_INVALID;
     }
-    return 0;
+    return SUCCESS;
 }
 
 
-int chip8_F_instructions(chip8* machine, uint16_t instruction) {
+error_t chip8_F_instructions(chip8* machine, uint16_t instruction) {
     int status = 0;
     int key;
     uint8_t reg1 = REG1(instruction);
@@ -309,7 +333,8 @@ int chip8_F_instructions(chip8* machine, uint16_t instruction) {
             if (options.disassemble) { printf("in, v%X", reg1); break; }
             machine->v[reg1] &= 0xFFF0;
             key = chip8_poll_keypress(machine);
-            if (key == 0xFF) return -1;
+            if (key == 0xFF) return ERR_QUIT;
+            machine->last_pressed = key;
             machine->v[reg1] |= key;
             break;
         case 0x15: 
@@ -319,7 +344,7 @@ int chip8_F_instructions(chip8* machine, uint16_t instruction) {
         case 0x18: 
             if (options.disassemble) { printf("mov stm, v%X", reg1); break; }
             machine->sound_timer = machine->v[reg1];
-            unpause_audio(&machine->sound);
+            return unpause_audio(&machine->sound);
             break;
         case 0x1E: 
             if (options.disassemble) { printf("add I, v%X", reg1); break; }
@@ -355,9 +380,9 @@ int chip8_F_instructions(chip8* machine, uint16_t instruction) {
             break;
         default:
             if (options.disassemble) { printf("UNKNOWN INSTRUCTION"); break; }
-            status = -1;
+            return ERR_INSTR_INVALID;
     }
-    return status;
+    return SUCCESS;
 }
 
 int chip8_poll_keypress(chip8* machine) {
@@ -395,7 +420,7 @@ uint8_t get_press_value(SDL_Keycode key) {
         case SDLK_F: return 0xF;
         default: break; //invalid
     }
-    return 0x10;
+    return 0xFF;
 }
 
 uint8_t quit(chip8* machine) {
@@ -417,7 +442,7 @@ Uint32 chip8_decrease_timers(void* userdata, SDL_TimerID time, Uint32 interval) 
     if (machine->sound_timer > 0) {
         machine->sound_timer--;
     } else if (machine->sound_timer == 0) { 
-        if (pause_audio(&machine->sound) < 0) return -1;
+        if (pause_audio(&machine->sound) < 0) return ERR_AUDIO_PAUSE;
         machine->sound_timer--;
     }
     return 1000/TIMER_FREQUENCY;
