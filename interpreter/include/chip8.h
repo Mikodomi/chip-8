@@ -24,12 +24,12 @@ typedef struct {
     uint8_t         sound_timer;
     chip8_screen    screen;
     audio           sound;
-    uint8_t         last_pressed;
 
     // SDL
     SDL_Window*     sdl_window;
     SDL_Renderer*   sdl_renderer;
     SDL_TimerID     sdl_timerID;
+    SDL_TimerID     sdl_cycleID;
 
     uint16_t size;
 } chip8;
@@ -46,10 +46,14 @@ typedef enum {
     ERR_AUDIO_PAUSE,
     ERR_AUDIO_UNPAUSE,
 
+    ERR_KEYBOARD,
+
     ERR_INSTR_INVALID,
 } error_t;
 
-void chip8_handle_error(chip8* machine, uint16_t instruction, error_t status);
+int chip8_keyboard_is_pressed(const chip8* machine, int key);
+
+void chip8_handle_error(const chip8* machine, uint16_t instruction, error_t status);
 
 error_t chip8_init(chip8* machine, char* title);
 void chip8_destroy(chip8* machine);

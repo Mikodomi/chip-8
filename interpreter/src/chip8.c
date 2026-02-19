@@ -16,6 +16,7 @@
 #define SCREEN_WIDTH 64
 #define SCREEN_HEIGHT 32
 #define TIMER_FREQUENCY 60
+#define TICK_SPEED 500
 
 // takes original 16 bits as input (in big endian order)
 #define REG1(x) (x & 0x000F)
@@ -23,7 +24,19 @@
 #define CONST_VALUE(x) ((x & 0xFF00) >> 8)
 #define MEM_VALUE(x) (((x & 0xFF00) >> 8) | ((x & 0x000F) << 8))
 
-void chip8_handle_error(chip8* machine, uint16_t instruction, error_t status) {
+Uint32 chip8_decrease_timers(void* userdata, SDL_TimerID time, Uint32 interval) {
+    chip8* machine = (chip8*)userdata;    
+    if (machine->delay_timer != 0) machine->delay_timer--;
+    if (machine->sound_timer > 0) {
+        machine->sound_timer--;
+    } else if (machine->sound_timer == 0) { 
+        if (pause_audio(&machine->sound) < 0) return ERR_AUDIO_PAUSE;
+        machine->sound_timer--;
+    }
+    return 1000/TIMER_FREQUENCY;
+}
+
+void chip8_handle_error(const chip8* machine, uint16_t instruction, error_t status) {
     switch (status) {
         case SUCCESS: break; // should never get here
         case ERR_INIT_SDL:
@@ -51,8 +64,9 @@ error_t chip8_init(chip8* machine, char* title) {
     memset(machine, 0, sizeof(chip8));
 
     machine->pc = 0x100;
-    machine->stack_pointer = &machine->mem[0xEA0];
+    machine->stack_pointer = &machine->mem[0x100];
     machine->delay_timer = 0;
+
 
     if(screen_create(&machine->screen) < 0) {
         return ERR_INIT_SCREEN; 
@@ -101,10 +115,49 @@ int chip8_load_rom(chip8* machine, FILE* rom_input, FILE* fonts_input) {
     return bytes_read;
 }
 
+SDL_Scancode get_value_scancode(int key) {
+    switch (key) {
+        case 0: return SDL_SCANCODE_0;
+        case 1: return SDL_SCANCODE_1;
+        case 2: return SDL_SCANCODE_2;
+        case 3: return SDL_SCANCODE_3;
+        case 4: return SDL_SCANCODE_4;
+        case 5: return SDL_SCANCODE_5;
+        case 6: return SDL_SCANCODE_6;
+        case 7: return SDL_SCANCODE_7;
+        case 8: return SDL_SCANCODE_8;
+        case 9: return SDL_SCANCODE_9;
+        case 0xA: return SDL_SCANCODE_A;
+        case 0xB: return SDL_SCANCODE_B;
+        case 0xC: return SDL_SCANCODE_C;
+        case 0xD: return SDL_SCANCODE_D;
+        case 0xE: return SDL_SCANCODE_E;
+        case 0xF: return SDL_SCANCODE_F;
+        default: break;
+    }
+    return -1;
+}
+
+int chip8_keyboard_is_pressed(const chip8* machine, int key) {
+    int numkeys;
+    const bool* key_states = SDL_GetKeyboardState(&numkeys);
+    if (!key_states) return -1;
+    return key_states[get_value_scancode(key)];
+}
+
+//void chip8_keyboard_set(chip8* machine, int key) {
+//    machine->keyboard |= (0x1 << key);
+//}
+//
+//void chip8_keyboard_unset(chip8* machine, int key) {
+//    machine->keyboard &= (~(0x1 << key));
+//}
+
 error_t chip8_fde_cycle(chip8* machine) { // fetch decode execute
     error_t status = 0;
     uint16_t instruction;
     for (;2*(machine->pc-0x100) < machine->size; ) {
+        usleep(1000000/TICK_SPEED);
         instruction = ((uint16_t*)machine->mem)[machine->pc]; 
         if (quit(machine)) return status;
         if (options.disassemble) {
@@ -120,7 +173,7 @@ error_t chip8_fde_cycle(chip8* machine) { // fetch decode execute
         status = chip8_decode_execute(machine, instruction);
         if (status != SUCCESS) {
             chip8_handle_error(machine, instruction, status);
-            break;
+            //break;
         }
     }
     return SUCCESS;
@@ -300,15 +353,17 @@ void chip8_draw(chip8* machine, int reg1, int reg2, int value) {
 error_t chip8_E_instructions(chip8* machine, uint16_t instruction) {
     int value = CONST_VALUE(instruction);
     int reg1 = REG1(instruction);
-    uint8_t expected_value = (machine->v[reg1] & 0x000F);
+    int expected_pressed = machine->v[reg1];
+    int is_pressed = chip8_keyboard_is_pressed(machine, expected_pressed);
+    if (is_pressed < 0) return ERR_KEYBOARD;
     switch (value) {
         case 0x9E:
             if (options.disassemble) { printf("skpe v%X", reg1); break; }
-            machine->pc += (machine->last_pressed == expected_value);
+            machine->pc += is_pressed;
             break;
         case 0xA1:
             if (options.disassemble) { printf("skpne v%X", reg1); break; }
-            machine->pc += (machine->last_pressed != expected_value);
+            machine->pc += !is_pressed;
             break;
         default: 
             if (options.disassemble) { printf("UNKNOWN INSTRUCTION"); break; }
@@ -319,7 +374,6 @@ error_t chip8_E_instructions(chip8* machine, uint16_t instruction) {
 
 
 error_t chip8_F_instructions(chip8* machine, uint16_t instruction) {
-    int status = 0;
     int key;
     uint8_t reg1 = REG1(instruction);
     uint16_t value = CONST_VALUE(instruction);
@@ -334,7 +388,6 @@ error_t chip8_F_instructions(chip8* machine, uint16_t instruction) {
             machine->v[reg1] &= 0xFFF0;
             key = chip8_poll_keypress(machine);
             if (key == 0xFF) return ERR_QUIT;
-            machine->last_pressed = key;
             machine->v[reg1] |= key;
             break;
         case 0x15: 
@@ -391,13 +444,15 @@ int chip8_poll_keypress(chip8* machine) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_EVENT_KEY_DOWN) {
+                //chip8_keyboard_set(machine, get_press_value(e.key.key)); 
+            } else if (e.type == SDL_EVENT_KEY_UP) {
                 return get_press_value(e.key.key);
             } else if (e.type == SDL_EVENT_QUIT) {
                 return 0xFF;
             }
         }
     }
-    return 0xFF;
+    return 0;
 }
 
 uint8_t get_press_value(SDL_Keycode key) {
@@ -423,12 +478,11 @@ uint8_t get_press_value(SDL_Keycode key) {
     return 0xFF;
 }
 
+
 uint8_t quit(chip8* machine) {
     SDL_Event e; 
     if (SDL_PollEvent(&e)) {
-        if (e.type == SDL_EVENT_KEY_DOWN) {
-            machine->last_pressed = get_press_value(e.key.key);
-        } else if (e.type == SDL_EVENT_QUIT) {
+        if (e.type == SDL_EVENT_QUIT) {
             return 1;
         }
     } // deal with keypresses later
@@ -436,17 +490,6 @@ uint8_t quit(chip8* machine) {
 }
 
 
-Uint32 chip8_decrease_timers(void* userdata, SDL_TimerID time, Uint32 interval) {
-    chip8* machine = (chip8*)userdata;    
-    if (machine->delay_timer != 0) machine->delay_timer--;
-    if (machine->sound_timer > 0) {
-        machine->sound_timer--;
-    } else if (machine->sound_timer == 0) { 
-        if (pause_audio(&machine->sound) < 0) return ERR_AUDIO_PAUSE;
-        machine->sound_timer--;
-    }
-    return 1000/TIMER_FREQUENCY;
-}
 
 int opts_init(int argc, char **argv) {
     int opt;
@@ -455,6 +498,8 @@ int opts_init(int argc, char **argv) {
         switch (opt) {
             case 'd':
                 options.disassemble = 1;
+                break;
+            default:
                 break;
         }
     }
